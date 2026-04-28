@@ -931,8 +931,8 @@ function getFilteredData() {
     // State
     const rowState = (col(r,'state') || '').trim().toLowerCase();
     if (currentState !== 'All' && rowState !== currentState.trim().toLowerCase()) return false;
-    // Program — match strictly against "Program Name" column
-    const rowProg = (r['Program Name'] || r['Programme Name'] || r['Program name'] || r['Programme name'] || '').trim().toLowerCase();
+    // Program — read column A (index 0) directly
+    const rowProg = (r._raw && r._raw[0] ? String(r._raw[0]).trim() : (r['Program Name'] || r['Programme Name'] || r['Program name'] || r['Programme name'] || '').trim()).toLowerCase();
     if (currentProgram !== 'All' && rowProg !== currentProgram.trim().toLowerCase()) return false;
     // Year — from Start Date Year sub-column
     if (currentYear !== 'All') {
@@ -1885,9 +1885,11 @@ let currentProgram = 'All';
 let currentYear = 'All';
 // Populate Program List dynamically from sheet after load
 async function loadProgramList() {
-  // Read strictly from "Program Name" column only
+  // Always read column A (index 0) directly — most reliable regardless of header merging
   function getProgramName(r) {
-    return (r['Program Name'] || r['Programme Name'] || r['Program name'] || r['Programme name'] || '').trim();
+    const byIndex = (r._raw && r._raw[0] ? String(r._raw[0]).trim() : '');
+    const byName  = (r['Program Name'] || r['Programme Name'] || r['Program name'] || r['Programme name'] || '').trim();
+    return byIndex || byName;
   }
   const allPrograms = [
     ...new Set([
