@@ -1781,6 +1781,14 @@ function populateFiltersAndRender() {
   document.getElementById('lastSync').textContent = 'Updated ' + now.toLocaleTimeString();
 }
 
+// Fetch with 8s timeout — don't let one slow sheet block everything
+function fetchWithTimeout(tab, sheetId, ms = 8000) {
+  return Promise.race([
+    fetchSheet(tab, sheetId),
+    new Promise(resolve => setTimeout(() => resolve([]), ms))
+  ]);
+}
+
 async function fetchAllSheets() {
   const tagRows = (rows, progName) =>
     rows.map(r => {
@@ -1790,17 +1798,25 @@ async function fetchAllSheets() {
       return r;
     });
 
+  let done = 0;
+  const total = CONFIG.PROGRAMS.length;
+  const subEl = document.getElementById('loader-sub');
+
   const results = await Promise.all(
     CONFIG.PROGRAMS.map(prog =>
       Promise.all([
-        prog.tabs.GRID ? fetchSheet(prog.tabs.GRID, prog.id).catch(() => []) : Promise.resolve([]),
-        prog.tabs.MINI ? fetchSheet(prog.tabs.MINI, prog.id).catch(() => []) : Promise.resolve([]),
-        prog.tabs.SAS  ? fetchSheet(prog.tabs.SAS,  prog.id).catch(() => []) : Promise.resolve([]),
-      ]).then(([geRows, mgRows, sasRows]) => ({
-        ge:  tagRows(geRows,  prog.name),
-        mg:  tagRows(mgRows,  prog.name),
-        SAS: tagRows(sasRows, prog.name),
-      }))
+        prog.tabs.GRID ? fetchWithTimeout(prog.tabs.GRID, prog.id).catch(() => []) : Promise.resolve([]),
+        prog.tabs.MINI ? fetchWithTimeout(prog.tabs.MINI, prog.id).catch(() => []) : Promise.resolve([]),
+        prog.tabs.SAS  ? fetchWithTimeout(prog.tabs.SAS,  prog.id).catch(() => []) : Promise.resolve([]),
+      ]).then(([geRows, mgRows, sasRows]) => {
+        done++;
+        if (subEl) subEl.textContent = `Loading programmes… ${done}/${total}`;
+        return {
+          ge:  tagRows(geRows,  prog.name),
+          mg:  tagRows(mgRows,  prog.name),
+          SAS: tagRows(sasRows, prog.name),
+        };
+      })
     )
   );
 
