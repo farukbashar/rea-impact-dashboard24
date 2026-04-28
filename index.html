@@ -859,8 +859,8 @@ let currentStatus = 'All';
 let currentState = 'All';
 
 function csvUrl(tab, sheetId) {
-  const direct = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tab)}`;
-  return `https://corsproxy.io/?url=${encodeURIComponent(direct)}`;
+  // Direct gviz endpoint — works on https:// origins with "Anyone with the link" sharing
+  return `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tab)}`;
 }
 
 // Find column value by fuzzy header match
@@ -1720,7 +1720,11 @@ async function fetchSheet(tab, sheetId) {
           return obj;
         }).filter(r => {
           const { _raw, ...rest } = r;
-          return Object.values(rest).some(v => v !== '');
+          // Require at least 3 non-empty cells AND at least one of the first 5 raw columns non-empty
+          // This eliminates empty template rows
+          const nonEmpty = Object.values(rest).filter(v => v !== '').length;
+          const hasEarlyData = _raw && [0,1,2,3,4].some(i => _raw[i] && String(_raw[i]).trim() !== '');
+          return nonEmpty >= 3 && hasEarlyData;
         });
 
         resolve(data);
