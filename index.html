@@ -1752,32 +1752,36 @@ async function loadData() {
   RAW.SAS = [];
 
   try {
-    const total = CONFIG.PROGRAMS.length;
-    for (let i = 0; i < total; i++) {
-      const prog = CONFIG.PROGRAMS[i];
-      document.getElementById('loader-sub').textContent =
-        `Loading ${prog.name} (${i + 1}/${total})…`;
+    document.getElementById('loader-sub').textContent = 'Fetching all programmes in parallel…';
 
-      // Fetch each tab for this programme; tag every row with the programme name
-      const tagRows = (rows, progName) =>
-        rows.map(r => {
-          // Inject programme name if the sheet doesn't already have it
-          if (!r['Programme'] && !r['Program'] && !r['programme'] && !r['program']) {
-            r['Programme'] = progName;
-          }
-          return r;
-        });
+    // Tag rows with programme name
+    const tagRows = (rows, progName) =>
+      rows.map(r => {
+        if (!r['Programme'] && !r['Program'] && !r['programme'] && !r['program']) {
+          r['Programme'] = progName;
+        }
+        return r;
+      });
 
-      const [geRows, mgRows, sasRows] = await Promise.all([
-        prog.tabs.GRID ? fetchSheet(prog.tabs.GRID, prog.id).catch(() => []) : Promise.resolve([]),
-        prog.tabs.MINI ? fetchSheet(prog.tabs.MINI, prog.id).catch(() => []) : Promise.resolve([]),
-        prog.tabs.SAS  ? fetchSheet(prog.tabs.SAS,  prog.id).catch(() => []) : Promise.resolve([]),
-      ]);
+    // Fetch ALL 18 programmes simultaneously — 18x faster than sequential
+    const results = await Promise.all(
+      CONFIG.PROGRAMS.map(prog =>
+        Promise.all([
+          prog.tabs.GRID ? fetchSheet(prog.tabs.GRID, prog.id).catch(() => []) : Promise.resolve([]),
+          prog.tabs.MINI ? fetchSheet(prog.tabs.MINI, prog.id).catch(() => []) : Promise.resolve([]),
+          prog.tabs.SAS  ? fetchSheet(prog.tabs.SAS,  prog.id).catch(() => []) : Promise.resolve([]),
+        ]).then(([geRows, mgRows, sasRows]) => ({
+          ge:  tagRows(geRows,  prog.name),
+          mg:  tagRows(mgRows,  prog.name),
+          SAS: tagRows(sasRows, prog.name),
+        }))
+      )
+    );
 
-      RAW.ge  = RAW.ge.concat(tagRows(geRows,  prog.name));
-      RAW.mg  = RAW.mg.concat(tagRows(mgRows,  prog.name));
-      RAW.SAS = RAW.SAS.concat(tagRows(sasRows, prog.name));
-    }
+    // Merge all results
+    RAW.ge  = results.flatMap(r => r.ge);
+    RAW.mg  = results.flatMap(r => r.mg);
+    RAW.SAS = results.flatMap(r => r.SAS);
     // Populate state filter
     const allStates = [...new Set([
       ...RAW.ge.map(r  => (col(r,'state') || '').trim()),
