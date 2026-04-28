@@ -970,14 +970,9 @@ function computeMetrics(ge, mg, SAS) {
   // Connection counts
   // GE: SIM formula = No_of_Communities × HH_Per_Community
   // HH_Per_Community = EXP((transformer_kVA + 2436.2) / 551.26) [NESIP]
-  function geHHPerCommunity(r) {
-    const kva = num(col(r,'total transformer capacity','transformer capacity','transformer','kva','mva'));
-    if (kva > 0) return Math.exp((kva + 2436.2) / 551.26);
-    return 1; // fallback: no transformer data — treat as 1 per community entry
-  }
+  // GE: count communities directly — no multiplier
   const geRes  = activeGE.reduce((s,r) => {
-    const communities = num(col(r,'number of communities electrified by grid extension','communities electrified by grid','communities electrified','residential','household','number of communities'));
-    return s + communities * geHHPerCommunity(r);
+    return s + num(col(r,'number of communities electrified by grid extension','communities electrified by grid','communities electrified','number of communities'));
   }, 0);
   const geBiz  = activeGE.reduce((s,r) => s + num(col(r,'commercial','business','msme')), 0);
   // GE institutions = sum of specific columns only (Hospital + School + Public Facilities)
