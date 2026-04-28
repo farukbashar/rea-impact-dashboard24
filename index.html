@@ -859,8 +859,8 @@ let currentStatus = 'All';
 let currentState = 'All';
 
 function csvUrl(tab, sheetId) {
-  // Direct gviz endpoint — works on https:// origins with "Anyone with the link" sharing
-  return `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tab)}`;
+  // Direct gviz endpoint — cache-bust param avoids QUIC protocol stalls
+  return `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tab)}&t=${Math.floor(Date.now()/300000)}`;
 }
 
 // Find column value by fuzzy header match
@@ -978,16 +978,16 @@ function computeMetrics(ge, mg, SAS) {
   // GE institutions = sum of specific columns only (Hospital + School + Public Facilities)
   const geInst = 0; // not used — ea6 is computed from sub-totals directly
   // EA6 — direct index fallback: MG Hospital=col25, School=col26, PubFac=col27
-  function getHosp(r)  { return num(r['Hospital']         || r['Institutions']  || (r._raw && r._raw[25]) || 0); }
-  function getSchool(r){ return num(r['School']            || (r._raw && r._raw[26]) || 0); }
-  function getPub(r)   { return num(r['Public Facilities'] || (r._raw && r._raw[27]) || 0); }
+  function getHosp(r)  { return num(r['Hospital']         || r['Hospitals'] || r['Institutions']  || (r._raw && r._raw[25]) || 0); }
+  function getSchool(r){ return num(r['School']            || r['Schools']  || (r._raw && r._raw[26]) || 0); }
+  function getPub(r)   { return num(r['Public Facilities'] || r['Public Facility'] || (r._raw && r._raw[27]) || 0); }
 
   const geHosp   = activeGE.reduce((s,r) => s + getHosp(r),   0);
   const geSchool = activeGE.reduce((s,r) => s + getSchool(r), 0);
   const gePub    = activeGE.reduce((s,r) => s + getPub(r),    0);
 
-  const mgRes  = activeMG.reduce((s,r) => s + num(col(r,'residential connections','residential','household')), 0);
-  const mgBiz  = activeMG.reduce((s,r) => s + num(col(r,'commercial/pue','commercial pue','commercial','business','msme','pue')), 0);
+  const mgRes  = activeMG.reduce((s,r) => s + num(col(r,'residential connections','residential connections','residential','household')), 0);
+  const mgBiz  = activeMG.reduce((s,r) => s + num(col(r,'commercial / pue','commercial/pue','commercial pue','commercial','business','msme','pue')), 0);
   const mgInst = 0; // not used — ea6 is computed from sub-totals directly
   const mgHosp   = activeMG.reduce((s,r) => s + getHosp(r),   0);
   const mgSchool = activeMG.reduce((s,r) => s + getSchool(r), 0);
@@ -1029,7 +1029,7 @@ function computeMetrics(ge, mg, SAS) {
   // ES metrics
   // ES metrics — use direct column index as primary (guaranteed regardless of header name)
   // MG: PV=col22, Inverter=col23, Battery=col24 | SAS: PV=col17, Battery=col18
-  const mgPV_kWp  = activeMG.reduce((s,r)  => s + num(r['Installed PV (kWp)'] || r['Installed PV'] || r['Installed PV '] || (r._raw && r._raw[22]) || 0), 0);
+  const mgPV_kWp  = activeMG.reduce((s,r)  => s + num(r['Installed PV (kWp)'] || r['Installed PV'] || r['Installed PV '] || col(r,'installed pv') || (r._raw && r._raw[22]) || 0), 0);
   const SASPV_Wp  = activeSAS.reduce((s,r) => s + num(r['Installed PV (kWp)'] || r['Installed PV'] || r['Total Installed PV (kwp)'] || (r._raw && r._raw[17]) || 0), 0);
   const es1   = (mgPV_kWp + SASPV_Wp) / 1000; // MWp
   const es3   = activeMG.reduce((s,r)  => s + num(r['Inverter Capacity (kW)'] || r['Inverter Capacity'] || r['Inverter Capacity '] || (r._raw && r._raw[23]) || 0), 0) / 1000; // MW
@@ -1041,7 +1041,7 @@ function computeMetrics(ge, mg, SAS) {
   const es8   = activeGE.reduce((s,r) => s + num(col(r,'transformer','mva','kva')), 0);
 
   // ECO metrics
-  const tariffs = activeMG.map(r => num(col(r,'tariff (₦/kwh)','tariff (₦/kwh)','tariff','rate'))).filter(v => v > 0);
+  const tariffs = activeMG.map(r => num(col(r,'tariff (₦/kwh)','tariff (₦/kwh)','tariff (n/kwh)','tariff','rate'))).filter(v => v > 0);
   const eco1  = tariffs.length > 0 ? tariffs.reduce((a,b) => a+b, 0) / tariffs.length : 0;
   // ECO2: SIM v1.0 — Savings_per_HH = $100/HH/year (Powerforall source)
   const eco2       = C.SAVINGS_HH;              // $100/HH/year per SIM doc
@@ -1054,13 +1054,15 @@ function computeMetrics(ge, mg, SAS) {
   // We read the NGN column by matching the naira "n" sub-header
   // and USD column by matching "$" sub-header
   function getCostNGN(r) {
-    // Match exact "N" or "₦" sub-column, or headers containing naira/ngn
-    // Also handles "Total Project Cost N", "cost (N)", etc.
     for (const [h, v] of Object.entries(r)) {
       const raw = h.trim();
       const hh  = raw.toLowerCase();
-      // Exact match first — most reliable
+      // Exact naira matches
       if (raw === 'N' || raw === '₦' || hh === 'ngn' || hh === 'naira') {
+        const n = num(v); if (n > 0) return n;
+      }
+      // DARES style: "₦ US$=N1400" or anything starting with ₦
+      if (raw.startsWith('₦') && !raw.includes('kWh') && !raw.includes('/')) {
         const n = num(v); if (n > 0) return n;
       }
     }
@@ -1642,7 +1644,7 @@ async function fetchSheet(tab, sheetId) {
   const url = csvUrl(tab, sheetId);
   let csvText;
   try {
-    const res = await fetch(url, { redirect: 'follow' });
+    const res = await fetch(url, { redirect: 'follow', cache: 'no-store' });
     if (!res.ok) { console.warn('fetchSheet HTTP error', res.status, tab); return []; }
     csvText = await res.text();
   } catch(e) {
