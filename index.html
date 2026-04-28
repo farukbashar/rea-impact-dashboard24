@@ -931,8 +931,8 @@ function getFilteredData() {
     // State
     const rowState = (col(r,'state') || '').trim().toLowerCase();
     if (currentState !== 'All' && rowState !== currentState.trim().toLowerCase()) return false;
-    // Program — read column A (index 0) directly
-    const rowProg = (r._raw && r._raw[0] ? String(r._raw[0]).trim() : (r['Program Name'] || r['Programme Name'] || r['Program name'] || r['Programme name'] || '').trim()).toLowerCase();
+    // Program — use injected 'Program Name' field (set by tagRows to config programme name)
+    const rowProg = (r['Program Name'] || r['Programme'] || r._raw && r._raw[0] && String(r._raw[0]).trim() || '').toLowerCase();
     if (currentProgram !== 'All' && rowProg !== currentProgram.trim().toLowerCase()) return false;
     // Year — from Start Date Year sub-column
     if (currentYear !== 'All') {
@@ -986,7 +986,7 @@ function computeMetrics(ge, mg, SAS) {
   const geSchool = activeGE.reduce((s,r) => s + getSchool(r), 0);
   const gePub    = activeGE.reduce((s,r) => s + getPub(r),    0);
 
-  const mgRes  = activeMG.reduce((s,r) => s + num(col(r,'residential connections','residential connections','residential','household')), 0);
+  const mgRes  = activeMG.reduce((s,r) => s + num(col(r,'residential connections','residential','household') || col(r,'total number of connections','total connections')), 0);
   const mgBiz  = activeMG.reduce((s,r) => s + num(col(r,'commercial / pue','commercial/pue','commercial pue','commercial','business','msme','pue')), 0);
   const mgInst = 0; // not used — ea6 is computed from sub-totals directly
   const mgHosp   = activeMG.reduce((s,r) => s + getHosp(r),   0);
@@ -1793,9 +1793,10 @@ function fetchWithTimeout(tab, sheetId, ms = 8000) {
 async function fetchAllSheets() {
   const tagRows = (rows, progName) =>
     rows.map(r => {
-      if (!r['Programme'] && !r['Program'] && !r['programme'] && !r['program']) {
-        r['Programme'] = progName;
-      }
+      // Always overwrite with the config programme name (column A in sheets
+      // may contain project names or different values — config name is authoritative)
+      r['Program Name'] = progName;
+      r['Programme']    = progName;
       return r;
     });
 
