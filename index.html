@@ -617,7 +617,7 @@ function togglePw() {
       <option value="Ongoing">Ongoing</option>
     </select>
   </div>
-  <button class="btn-ref" id="refreshBtn" onclick="loadData()">
+  <button class="btn-ref" id="refreshBtn" onclick="forceRefresh()">
     <svg width="11" height="11" viewBox="0 0 12 12">
       <path d="M10 6A4 4 0 0 1 2.3 8.5M2 6A4 4 0 0 1 9.7 3.5M10 1v3h-3M2 11V8h3"
        stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
@@ -1734,75 +1734,124 @@ async function fetchSheet(tab, sheetId) {
   });
 }
 
-async function loadData() {
+/* ══════════════════════════════════════════════════
+   CACHE LAYER — stores merged RAW data in IndexedDB
+   so repeat visits load instantly from local storage
+   and only re-fetch when user clicks Refresh
+══════════════════════════════════════════════════ */
+const CACHE_KEY = 'rea_raw_v2';
+const CACHE_TTL = 60 * 60 * 1000; // 1 hour max age
+
+async function saveCache(data) {
+  try {
+    const payload = JSON.stringify({ ts: Date.now(), data });
+    localStorage.setItem(CACHE_KEY, payload);
+  } catch(e) { /* storage full — skip cache */ }
+}
+
+function loadCache() {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const { ts, data } = JSON.parse(raw);
+    if (Date.now() - ts > CACHE_TTL) { localStorage.removeItem(CACHE_KEY); return null; }
+    return data;
+  } catch(e) { return null; }
+}
+
+function applyRawData(raw) {
+  RAW.ge  = raw.ge;
+  RAW.mg  = raw.mg;
+  RAW.SAS = raw.SAS;
+}
+
+function populateFiltersAndRender() {
+  const allStates = [...new Set([
+    ...RAW.ge.map(r  => (col(r,'state') || '').trim()),
+    ...RAW.mg.map(r  => (col(r,'state') || '').trim()),
+    ...RAW.SAS.map(r => (col(r,'state') || '').trim()),
+  ].filter(Boolean))].sort();
+  const sel = document.getElementById('stateFilter');
+  sel.innerHTML = '<option value="All">All States</option>' +
+    allStates.map(s => `<option value="${s}">${s}</option>`).join('');
+  loadProgramList();
+  loadYearList();
+  refreshDashboard();
+  const now = new Date();
+  document.getElementById('lastSync').textContent = 'Updated ' + now.toLocaleTimeString();
+}
+
+async function fetchAllSheets() {
+  const tagRows = (rows, progName) =>
+    rows.map(r => {
+      if (!r['Programme'] && !r['Program'] && !r['programme'] && !r['program']) {
+        r['Programme'] = progName;
+      }
+      return r;
+    });
+
+  const results = await Promise.all(
+    CONFIG.PROGRAMS.map(prog =>
+      Promise.all([
+        prog.tabs.GRID ? fetchSheet(prog.tabs.GRID, prog.id).catch(() => []) : Promise.resolve([]),
+        prog.tabs.MINI ? fetchSheet(prog.tabs.MINI, prog.id).catch(() => []) : Promise.resolve([]),
+        prog.tabs.SAS  ? fetchSheet(prog.tabs.SAS,  prog.id).catch(() => []) : Promise.resolve([]),
+      ]).then(([geRows, mgRows, sasRows]) => ({
+        ge:  tagRows(geRows,  prog.name),
+        mg:  tagRows(mgRows,  prog.name),
+        SAS: tagRows(sasRows, prog.name),
+      }))
+    )
+  );
+
+  return {
+    ge:  results.flatMap(r => r.ge),
+    mg:  results.flatMap(r => r.mg),
+    SAS: results.flatMap(r => r.SAS),
+  };
+}
+
+async function loadData(forceRefresh = false) {
   if (!CONFIG.PROGRAMS || CONFIG.PROGRAMS.length === 0) {
     document.getElementById('loader').classList.add('hidden');
-    showError('No programmes configured in CONFIG.PROGRAMS. Please add at least one programme with a Sheet ID.');
+    showError('No programmes configured in CONFIG.PROGRAMS.');
     return;
   }
   clearError();
-  document.getElementById('loader').classList.remove('hidden');
-  document.getElementById('loader-sub').textContent = 'Fetching from Google Sheets…';
   const btn = document.getElementById('refreshBtn');
   btn.classList.add('loading');
 
-  // Reset raw data
+  // ── Try cache first (instant load) ──────────────────
+  if (!forceRefresh) {
+    const cached = loadCache();
+    if (cached) {
+      applyRawData(cached);
+      populateFiltersAndRender();
+      document.getElementById('loader').classList.add('hidden');
+      btn.classList.remove('loading');
+      // Silently refresh cache in background
+      fetchAllSheets().then(fresh => saveCache(fresh)).catch(() => {});
+      return;
+    }
+  }
+
+  // ── No cache — show loader and fetch ────────────────
+  document.getElementById('loader').classList.remove('hidden');
+  document.getElementById('loader-sub').textContent = 'Fetching all programmes in parallel…';
+
   RAW.ge  = [];
   RAW.mg  = [];
   RAW.SAS = [];
 
   try {
-    document.getElementById('loader-sub').textContent = 'Fetching all programmes in parallel…';
-
-    // Tag rows with programme name
-    const tagRows = (rows, progName) =>
-      rows.map(r => {
-        if (!r['Programme'] && !r['Program'] && !r['programme'] && !r['program']) {
-          r['Programme'] = progName;
-        }
-        return r;
-      });
-
-    // Fetch ALL 18 programmes simultaneously — 18x faster than sequential
-    const results = await Promise.all(
-      CONFIG.PROGRAMS.map(prog =>
-        Promise.all([
-          prog.tabs.GRID ? fetchSheet(prog.tabs.GRID, prog.id).catch(() => []) : Promise.resolve([]),
-          prog.tabs.MINI ? fetchSheet(prog.tabs.MINI, prog.id).catch(() => []) : Promise.resolve([]),
-          prog.tabs.SAS  ? fetchSheet(prog.tabs.SAS,  prog.id).catch(() => []) : Promise.resolve([]),
-        ]).then(([geRows, mgRows, sasRows]) => ({
-          ge:  tagRows(geRows,  prog.name),
-          mg:  tagRows(mgRows,  prog.name),
-          SAS: tagRows(sasRows, prog.name),
-        }))
-      )
-    );
-
-    // Merge all results
-    RAW.ge  = results.flatMap(r => r.ge);
-    RAW.mg  = results.flatMap(r => r.mg);
-    RAW.SAS = results.flatMap(r => r.SAS);
-    // Populate state filter
-    const allStates = [...new Set([
-      ...RAW.ge.map(r  => (col(r,'state') || '').trim()),
-      ...RAW.mg.map(r  => (col(r,'state') || '').trim()),
-      ...RAW.SAS.map(r => (col(r,'state') || '').trim()),
-    ].filter(Boolean))].sort();
-    const sel = document.getElementById('stateFilter');
-    sel.innerHTML = '<option value="All">All States</option>' +
-      allStates.map(s => `<option value="${s}">${s}</option>`).join('');
-
-    await loadProgramList();
-    loadYearList();
-    refreshDashboard();
-
-    const now = new Date();
-    document.getElementById('lastSync').textContent = 'Updated ' + now.toLocaleTimeString();
-
+    const fresh = await fetchAllSheets();
+    applyRawData(fresh);
+    await saveCache(fresh);
+    populateFiltersAndRender();
     document.getElementById('loader').classList.add('hidden');
   } catch(e) {
     document.getElementById('loader').classList.add('hidden');
-    showError(`Could not fetch data. Make sure your Google Sheets are published (File → Share → Publish to web). Error: ${e.message||e}`);
+    showError(`Could not fetch data. Error: ${e.message||e}`);
     console.error(e);
   }
   btn.classList.remove('loading');
@@ -1810,6 +1859,11 @@ async function loadData() {
 
 function applyFilter() {
   applyCombinedFilter();
+}
+
+function forceRefresh() {
+  localStorage.removeItem(CACHE_KEY);
+  loadData(true);
 }
 
 function setTech(tech, el) {
