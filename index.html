@@ -1679,15 +1679,15 @@ async function fetchSheet(tab, sheetId) {
         let headers, dataStartIndex;
         if (isSubHeaderRow) {
           headers = row1.map((h, i) => {
-            const sub  = (row2[i] != null ? String(row2[i]) : '').trim();
-            const main = (h       != null ? String(h)       : '').trim();
+            const sub  = (row2[i] != null ? String(row2[i]) : '').trim().replace(/\s+/g, ' ');
+            const main = (h       != null ? String(h)       : '').trim().replace(/\s+/g, ' ');
             if (sub && !skipSub.has(sub.toLowerCase()) && !/^\d+$/.test(sub))
               return sub;
             return main;
           });
           dataStartIndex = 2;
         } else {
-          headers = row1.map(h => (h != null ? String(h) : '').trim());
+          headers = row1.map(h => (h != null ? String(h) : '').trim().replace(/\s+/g, ' '));
           dataStartIndex = 1;
         }
 
@@ -1722,11 +1722,10 @@ async function fetchSheet(tab, sheetId) {
           return obj;
         }).filter(r => {
           const { _raw, ...rest } = r;
-          // Require at least 3 non-empty cells AND at least one of the first 5 raw columns non-empty
-          // This eliminates empty template rows
-          const nonEmpty = Object.values(rest).filter(v => v !== '').length;
-          const hasEarlyData = _raw && [0,1,2,3,4].some(i => _raw[i] && String(_raw[i]).trim() !== '');
-          return nonEmpty >= 3 && hasEarlyData;
+          // Require at least 3 non-empty cells to eliminate blank template rows
+          // Don't check _raw positions — headers may have trailing spaces shifting values
+          const nonEmpty = Object.values(rest).filter(v => String(v).trim() !== '').length;
+          return nonEmpty >= 3;
         });
 
         resolve(data);
